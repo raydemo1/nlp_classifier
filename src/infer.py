@@ -5,6 +5,7 @@ import pandas as pd
 from sentence_transformers import SentenceTransformer
 import torch
 import numpy as np
+from grade_rules import score as grade_score
 
 def load_taxonomy(path):
     with open(path, "r", encoding="utf-8") as f:
@@ -159,14 +160,18 @@ def read_xlsx(path):
         out.append(sample)
     return out
 
-def infer_file(xlsx_path, tax_path="labels/taxonomy.json", domain_model_dir="outputs/models/domain", sub1_model_dir="outputs/models/subclass1", thresholds_path="labels/infer_thresholds.json", priors_path="labels/term_priors.json"):
+def infer_file(xlsx_path, tax_path="labels/taxonomy.json", domain_model_dir="outputs/models/domain", sub1_model_dir="outputs/models/subclass1", thresholds_path="labels/infer_thresholds.json", priors_path="labels/term_priors.json", grade_tax_path="labels/grade_taxonomy.json", grade_model_dir="outputs/models/grade"):
     tax = load_taxonomy(tax_path)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     domain_model = load_model_or_none(domain_model_dir, device)
     sub1_model = load_model_or_none(sub1_model_dir, device)
     base_model = SentenceTransformer("shibing624/text2vec-base-chinese-nli", device=device)
+    grade_model = load_model_or_none(grade_model_dir, device)
     thresholds = load_thresholds(thresholds_path)
     priors = load_priors(priors_path)
+    with open(grade_tax_path, "r", encoding="utf-8") as f:
+        grade_tx = json.load(f)
+    grade_candidates = list(grade_tx.get("grades", {}).keys())
     domain_candidates = list(tax["domains"].keys())
     samples = read_xlsx(xlsx_path)
     fields_out = []
@@ -217,16 +222,28 @@ def infer_file(xlsx_path, tax_path="labels/taxonomy.json", domain_model_dir="out
             pred_sub2 = ("", 0.0)
             s1_unknown = True
             s2_unknown = True
+        if grade_model and Path(grade_model_dir, "labels.json").exists():
+            with open(Path(grade_model_dir, "labels.json"), "r", encoding="utf-8") as f:
+                glabels = json.load(f)
+            gtop = predict_with_labels(grade_model, glabels, txt)
+        else:
+            grule = grade_score(txt, {"datatype": s.get("datatype", ""), "null": s.get("null", "")}, grade_tax_path)
+            gtop = grule
+        gtop = apply_priors(gtop, priors.get("grade", {}), txt)
+        g_unknown = decide_unknown(gtop, thresholds.get("grade", 0.40))
+        pred_grade = gtop[0]
         fields_out.append({
             "fieldname": s.get("fieldname", ""),
             "text": txt,
             "pred_domain": {"label": ("unknown" if d_unknown else pred_domain[0]), "score": float(pred_domain[1]), "is_unknown": bool(d_unknown)},
             "pred_subclass1": {"label": ("unknown" if s1_unknown else pred_sub1[0]), "score": float(pred_sub1[1]), "is_unknown": bool(s1_unknown)},
             "pred_subclass2": {"label": ("unknown" if s2_unknown else pred_sub2[0]), "score": float(pred_sub2[1]), "is_unknown": bool(s2_unknown)},
+            "pred_grade": {"label": ("unknown" if g_unknown else pred_grade[0]), "score": float(pred_grade[1]), "is_unknown": bool(g_unknown)},
             "candidates": {
                 "domain_top3": [{"label": l, "score": float(sc)} for l, sc in dtop[:3]],
                 "subclass1_top3": [{"label": l, "score": float(sc)} for l, sc in s1top[:3]],
-                "subclass2_top3": [{"label": l, "score": float(sc)} for l, sc in s2top[:3]]
+                "subclass2_top3": [{"label": l, "score": float(sc)} for l, sc in s2top[:3]],
+                "grade_top3": [{"label": l, "score": float(sc)} for l, sc in gtop[:3]]
             }
         })
     return {

@@ -24,6 +24,7 @@ def _canonical_row(row):
     nullok = _find_col(row, ["是否可为空", "NULL", "可空"])
     enumv = _find_col(row, ["枚举值", "enum", "枚举"])
     cls = _find_col(row, ["分类", "category", "业务分类"])
+    grade = _find_col(row, ["分级", "grade", "数据分级"])
     return {
         "dbname": _norm(dbname),
         "tablename": _norm(tablename),
@@ -33,7 +34,8 @@ def _canonical_row(row):
         "datatype": _norm(datatype),
         "null": _norm(nullok),
         "enum": _norm(enumv),
-        "classification": _norm(cls)
+        "classification": _norm(cls),
+        "grade": _norm(grade)
     }
 
 def _compose_text(x):
@@ -126,7 +128,8 @@ def build_dataset(input_root="data_", tax_path="labels/taxonomy.json", output_pa
                 "text": text,
                 "domain": d or "",
                 "sub1": s1 or "",
-                "sub2": s2 or ""
+                "sub2": s2 or "",
+                "grade": x.get("grade", "")
             })
     outdir = Path(output_path).parent
     outdir.mkdir(parents=True, exist_ok=True)
